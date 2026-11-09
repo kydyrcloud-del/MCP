@@ -147,6 +147,7 @@ Lists problems: issues that Dynatrace detected automatically, such as a slow ser
 | `additionalFilter` | – | For example `dt.entity.service == "SERVICE-1234"` or `entity_tags == array("dt.owner:team-a")` |
 | `maxProblemsToDisplay` | `10` | How many problems to show (1 to 5000) |
 
+
 - **How it works:** runs `fetch dt.davis.problems`, drops duplicate problems, keeps open problems (no `event.end`) or closed ones depending on `status`, and calculates the duration and the number of affected entities, events and users. Results are sorted by start time, newest first.
 - **Returns:** one line per problem: display ID (for example `P-12345`), problem ID, status, category, name, affected users, affected entities and duration. Next Steps include a DQL query for full details (root cause, Kubernetes and cloud fields) and a link to the problem in the Dynatrace UI.
 - **Example:** *"Are there open problems on the checkout service?"* → `{"status": "ACTIVE", "additionalFilter": "dt.entity.service == \"SERVICE-ABC\""}`
