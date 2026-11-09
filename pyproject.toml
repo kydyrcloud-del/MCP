@@ -1,0 +1,37 @@
+[project]
+name = "dynatrace-mcp-python"
+version = "0.1.0"
+description = "Python port of the Dynatrace MCP Server (Model Context Protocol server for Dynatrace)"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "httpx>=0.28.1",
+    "keyring>=25.7.0",
+    "mcp>=2.3,<3",
+    "pydantic[email]>=2.11",
+    "pyjwt[crypto]>=2.10",
+    "starlette>=1.10.0",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+dynatrace-mcp-python = "dynatrace_mcp.server:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "dynatrace_mcp"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+    "respx>=0.23.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
