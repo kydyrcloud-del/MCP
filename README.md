@@ -1,6 +1,6 @@
 # Dynatrace MCP Server (Python)
 
-A Model Context Protocol (MCP) server that lets AI assistants and agents query and act on a Dynatrace environment. It runs locally next to an AI client (stdio), or as a shared HTTP service behind Azure API Management with Microsoft Entra ID sign-in and per-tool authorization.
+A Model Context Protocol (MCP) server that lets AI assistants and agents read data from a Dynatrace environment. It runs locally next to an AI client (stdio), or as a shared HTTP service behind Azure API Management with Microsoft Entra ID sign-in and per-tool authorization.
 
 It offers 9 read-only tools for querying problems, vulnerabilities, exceptions, deployments, entities and service health, and verifying DQL.
 
@@ -121,7 +121,7 @@ A few things are the same for every tool:
 
 - **Output is text for the model.** Each tool returns a formatted text answer. Most answers end with **Next Steps**: suggested follow-up tool calls and ready-made DQL queries, so the model knows how to dig deeper.
 - **Errors come back as tool errors.** A Dynatrace API error or bad input becomes an MCP tool error with the message, and the server keeps running (`guarded` in `server.py`).
-- **Fixed-query tools use DQL underneath.** Every tool except `get_environment_info` and `verify_dql` builds a fixed DQL query (`capabilities/queries.py`) and run it through the Grail query API (`capabilities/execute_dql.py`).
+- **Fixed-query tools use DQL underneath.** Every tool except `get_environment_info` and `verify_dql` builds a fixed DQL query (`capabilities/queries.py`) and runs it through the Grail query API (`capabilities/execute_dql.py`).
 - **Timeframes** are a number plus a unit: `s`, `m`, `h`, `d`, `w`, `M` (months) or `y`, for example `30m`, `24h`, `7d`. Anything else is rejected. Timeframes longer than `MAX_QUERY_TIMEFRAME` (default `30d`) are rejected too.
 - **Entity IDs** (`entityId`, `serviceId`) must look like `SERVICE-1A2B3C4D5E6F7A8B`: an upper-case type and a hex ID. Anything else is rejected before a query is built.
 - **`additionalFilter`** is one DQL filter condition added as `| filter <your filter>`. It may not contain `|` or newlines, so it can't add extra query stages.
@@ -190,8 +190,8 @@ Finds the Dynatrace entity ID and type for a name, such as a service, host, proc
 | `maxEntitiesToDisplay` | `10` | How many matches to show |
 | `extendedSearch` | `false` | `true` searches every entity type, not just the common ones |
 
-- **How it works:** first searches Smartscape (`smartscapeNodes "*" | search ...`). If that finds nothing or isn't available in the environment, it searches the classic entity tables (`fetch dt.entity.service`, `dt.entity.host`, ...) for 24 common types, or for all types with `extendedSearch`.
-- **Returns:** per match: name, type, entity ID, tags, and a ready-to-use DQL filter such as `| filter dt.entity.service == "SERVICE-1234"`. Paste that filter into `list_problems` or `list_vulnerabilities`.
+- **How it works:** first searches Smartscape (`smartscapeNodes "*" | search ...`). If that finds nothing or isn't available in the environment, it searches the classic entity tables (`fetch dt.entity.service`, `dt.entity.host`, ...) for 23 common types, or for all 36 known types with `extendedSearch`.
+- **Returns:** per match: name, type, entity ID, tags, and a ready-to-use DQL filter such as `| filter dt.entity.service == "SERVICE-1234"`. Paste that filter into `list_problems` or `list_vulnerabilities`, or pass the ID to `get_entity_details`, `list_deployments` or (for services) `get_service_health`.
 
 #### `verify_dql`
 
@@ -299,7 +299,7 @@ Gives concrete numbers for one service: how fast it is, how much traffic it has 
   1. Parses arguments (`--http`, `--host`, `--port`, `--oauth-redirect-port`).
   2. Loads and validates config. Exits with code 1 on errors.
   3. In HTTP mode, refuses to start with the browser login (it needs a person at the machine).
-  4. Applies the DQL timeout and logs the security setup.
+  4. Applies the DQL timeout and logs the security setup and the `MAX_QUERY_TIMEFRAME` limit.
   5. Runs `check_connection`: is the environment reachable (exit 3), and do the credentials work (exit 2)?
   6. Starts stdio, or uvicorn with the `http_app`.
 
@@ -323,9 +323,9 @@ Gives concrete numbers for one service: how fast it is, how much traffic it has 
   - Checks the RS256 signature, `exp`, `aud` (`ENTRA_AUDIENCE`), `iss` (v1 and v2 issuers), `tid`, and optionally the calling app (`azp`/`appid` against `ENTRA_ALLOWED_CLIENT_IDS`).
   - Builds a `Caller` from `oid`, `preferred_username`/`upn` and `roles`, and records whether it's a user token or an app-only token.
 - **`caller.py`** defines the frozen `Caller` dataclass and a context variable so any tool can call `get_current_caller()`. For example, the audit log records `caller.id`.
-- **`roles.py`** defines the four roles, groups the tools into READ/ADMIN, and provides `ToolPolicy` (with optional `MCP_TOOL_ROLES` overrides). Tools not in the policy are denied.
+- **`roles.py`** defines the four roles, lists the tools in `READ_TOOLS` (all current tools are read-only), and provides `ToolPolicy` (with optional `MCP_TOOL_ROLES` overrides). Tools not in the policy are denied.
 - **`middleware.py`** applies the policy to `tools/list` and `tools/call`, and times and audits each call.
-- **`audit.py`** writes `AUDIT {...json...}` lines to stderr. The `body` and `message` arguments are replaced by their length, and long strings are truncated.
+- **`audit.py`** writes `AUDIT {...json...}` lines to stderr. Strings longer than 2,000 characters are truncated. Arguments named `body` or `message` are replaced by their length (no current tool has such arguments).
 
 ### `auth/`: how the server authenticates to Dynatrace
 
@@ -375,7 +375,7 @@ If no Dynatrace credentials are set, stdio mode uses the browser login. HTTP mod
 
 | Variable | Default | What to set |
 |---|---|---|
-| `MAX_QUERY_TIMEFRAME` | `30d` | Longest timeframe the query tools accept, e.g. `7d`, `2w`, `720h`. Longer requests are rejected with an error. |
+| `MAX_QUERY_TIMEFRAME` | `30d` | Longest timeframe accepted by `list_problems`, `list_vulnerabilities`, `list_exceptions`, `list_deployments` and `get_service_health`, e.g. `7d`, `2w`, `720h`. Longer requests are rejected with an error. |
 | `DQL_MAX_POLL_SECONDS` | `600` stdio, `60` HTTP | How long to wait for a DQL query before cancelling it. In HTTP mode, keep it below your gateway's and client's timeouts. |
 
 ### Server and transport (HTTP mode)
@@ -397,7 +397,7 @@ If no Dynatrace credentials are set, stdio mode uses the browser login. HTTP mod
 |---|---|---|
 | `MCP_AUTH_MODE` | `entra` if `ENTRA_TENANT_ID` is set, otherwise `bearer` | `entra` (Microsoft Entra ID tokens) or `bearer` (one shared static token). Set it explicitly in production. |
 | `MCP_BEARER_TOKEN` | – | **bearer mode:** the shared token (≥ 16 chars). Every request needs `Authorization: Bearer <token>`. |
-| `MCP_BEARER_ROLES` | all roles | **bearer mode:** roles given to whoever holds the token, e.g. `Dynatrace.Read,Dynatrace.Query`. |
+| `MCP_BEARER_ROLES` | all roles | **bearer mode:** roles given to whoever holds the token, e.g. `Dynatrace.Read`. |
 | `ENTRA_TENANT_ID` | – | **entra mode:** your tenant ID (GUID). |
 | `ENTRA_AUDIENCE` | – | **entra mode:** accepted `aud` values, comma-separated. Use both the Application ID URI and the client ID of the API app registration, e.g. `api://dynatrace-mcp,11111111-2222-3333-4444-555555555555`. |
 | `ENTRA_ISSUERS` | v1 + v2 issuers of the tenant | Override accepted `iss` values. Rarely needed. |
@@ -409,19 +409,21 @@ If no Dynatrace credentials are set, stdio mode uses the browser login. HTTP mod
 | Variable | Default | What to set |
 |---|---|---|
 | `MCP_REQUIRE_ROLE` | `true` | Reject callers (403) who hold none of the Dynatrace MCP roles. Keep it on. |
-| `MCP_TOOL_ROLES` | built-in policy | JSON that overrides which roles may call a tool, e.g. `{"list_problems": ["Dynatrace.Read","Dynatrace.Query"]}`. Unknown tool names are rejected at startup. |
+| `MCP_TOOL_ROLES` | built-in policy | JSON that overrides which roles may call a tool, e.g. `{"get_service_health": ["Dynatrace.Admin"]}`. Unknown tool names are rejected at startup. |
 | `MCP_STDIO_ROLES` | all roles | Roles of the local user in stdio mode, e.g. `Dynatrace.Read` for a read-only setup. |
 | `MCP_AUDIT_LOG` | `true` | Write an `AUDIT` JSON line per tool call to stderr. |
-| `MCP_AUDIT_LOG_ARGS` | `true` | Include tool arguments in the audit line. `body` and `message` are always redacted. |
+| `MCP_AUDIT_LOG_ARGS` | `true` | Include tool arguments in the audit line (truncated to 2,000 characters each). |
 
 ### Roles and tool authorization
 
 | Role | Grants |
 |---|---|
-| `Dynatrace.Read` | Read tools |
-| `Dynatrace.Query` | Read tools (query tools are currently removed) |
-| `Dynatrace.Write` | Nothing at the moment (write tools are currently removed) |
+| `Dynatrace.Read` | All 9 tools (they are all read-only) |
+| `Dynatrace.Query` | Same as Read. Kept so existing role assignments keep working. |
+| `Dynatrace.Write` | No tools at the moment. Kept for existing role assignments. |
 | `Dynatrace.Admin` | All tools |
+
+`Dynatrace.Read` is enough for every current tool. Use `MCP_TOOL_ROLES` to restrict a tool further, for example to `Dynatrace.Admin` only.
 
 In Entra mode, roles come from the token's `roles` claim, so define them as **app roles** on the API app registration and assign them to users or groups.
 
@@ -466,7 +468,7 @@ claude mcp add dynatrace \
       "args": ["run", "--directory", "/path/to/dynatrace-mcp-main-python", "dynatrace-mcp-python"],
       "env": {
         "DT_ENVIRONMENT": "https://<id>.apps.dynatrace.com",
-        "MCP_STDIO_ROLES": "Dynatrace.Read,Dynatrace.Query"
+        "MCP_STDIO_ROLES": "Dynatrace.Read"
       }
     }
   }
@@ -594,7 +596,7 @@ The service user behind the client also needs matching Dynatrace policies. Grant
 
 1. **API app** (represents this server), e.g. `dynatrace-mcp-api`:
    - **Expose an API**: Application ID URI `api://dynatrace-mcp`, and a scope `access_as_user`.
-   - **App roles** (allowed member types: Users/Groups, and Applications if you also want app-only callers): `Dynatrace.Read`, `Dynatrace.Query`, `Dynatrace.Write`, `Dynatrace.Admin`.
+   - **App roles** (allowed member types: Users/Groups, and Applications if you also want app-only callers): `Dynatrace.Read` and `Dynatrace.Admin` are all you need today. The server also accepts `Dynatrace.Query` and `Dynatrace.Write`, but they add nothing at the moment.
    - **Manifest**: set `"accessTokenAcceptedVersion": 2`.
    - **Enterprise application → Users and groups**: assign the roles to groups. Users without an assignment get 403.
 2. **Client app** (used by Copilot to sign users in):
@@ -724,6 +726,10 @@ AUDIT {"ts":"2026-11-07T10:15:02Z","event":"tool_call","tool":"list_problems","o
 | A tool is missing from the list | The caller's roles don't allow it; see [Tools](#3-tools) |
 | `DQL query did not finish within N seconds` | Narrow the timeframe or add filters, or raise `DQL_MAX_POLL_SECONDS` (and the gateway timeout) |
 | `Failed to retrieve OAuth token ... missing scopes` | Add the scopes from [Tools](#3-tools) to the Dynatrace OAuth client |
+| `Timeframe "..." is longer than the allowed maximum` | Ask for a shorter timeframe, or raise `MAX_QUERY_TIMEFRAME` |
+| `Invalid entity ID` | Pass an ID like `SERVICE-1A2B3C4D5E6F7A8B`; get it with `find_entity_by_name` |
+| `list_deployments` finds nothing | Run `fetch events \| summarize count(), by:{event.type}` in a Dynatrace notebook to see how deployment events are stored in your environment |
+| `get_service_health` finds no metrics | Check the service had traffic in the timeframe, and that the client has `storage:metrics:read` and a policy allowing the service metrics |
 
 ---
 
@@ -746,4 +752,7 @@ uv run python -m dynatrace_mcp --help
 
 1. Register it in `build_server()` in `server.py` with `@mcp.tool(...)` and `@guarded`.
 2. Request only the scopes it needs with `rt.client([...])`.
-3. Add the tool name to one of the groups in `security/roles.py`. Tools that aren't in the policy are denied.
+3. Add the tool name to `READ_TOOLS` in `security/roles.py`. Tools that aren't in the policy are denied.
+4. Validate every value that goes into DQL with the helpers in `utils/dql_sanitize.py` (timeframe, entity ID, filter), and call `check_timeframe_limit` for tools that take a timeframe.
+5. Add a test in `tests/test_server.py` that mocks the Dynatrace API with respx and checks the query that is sent.
+6. Add a row to the [Tools](#3-tools) table and a section to the tool reference.
